@@ -1,10 +1,11 @@
 import io
+import json
 import math
 import struct
 import unittest
 import wave
 
-from index import AnalysisError, analyze_wav
+from analyze import AnalysisError, analyze_wav, application
 
 
 def make_wav(bpm=120, duration=8, sample_rate=8000):
@@ -23,6 +24,24 @@ def make_wav(bpm=120, duration=8, sample_rate=8000):
             samples.extend(struct.pack("<h", value))
         audio.writeframes(samples)
     return buffer.getvalue()
+
+
+def request_api(method, path, body=b"", content_type=""):
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "CONTENT_LENGTH": str(len(body)),
+        "CONTENT_TYPE": content_type,
+        "wsgi.input": io.BytesIO(body),
+    }
+    response = {}
+
+    def start_response(status, headers):
+        response["status"] = int(status.split(" ", 1)[0])
+        response["headers"] = dict(headers)
+
+    payload = b"".join(application(environ, start_response))
+    return response["status"], response["headers"], json.loads(payload)
 
 
 class AnalyzeWavTests(unittest.TestCase):
@@ -52,6 +71,39 @@ class AnalyzeWavTests(unittest.TestCase):
         with self.assertRaises(AnalysisError) as error:
             analyze_wav(bytes(4 * 1024 * 1024 + 1))
         self.assertEqual(error.exception.status, 413)
+
+    def test_wsgi_health_route(self):
+        status, headers, payload = request_api("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, {"status": "ok"})
+        self.assertEqual(headers["Cache-Control"], "no-store")
+
+    def test_wsgi_analyze_route_returns_bpm(self):
+        status, _, payload = request_api("POST", "/api/analyze", make_wav(), "audio/wav")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["bpm"], 120)
+
+    def test_wsgi_rejects_unsupported_content_type(self):
+        status, _, payload = request_api("POST", "/api/analyze", b"invalid", "text/plain")
+        self.assertEqual(status, 415)
+        self.assertIn("WAV", payload["error"])
+
+    def test_wsgi_rejects_oversized_request_before_reading_body(self):
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/api/analyze",
+            "CONTENT_LENGTH": str(4 * 1024 * 1024 + 1),
+            "CONTENT_TYPE": "audio/wav",
+            "wsgi.input": io.BytesIO(b""),
+        }
+        response = {}
+
+        def start_response(status, headers):
+            response["status"] = int(status.split(" ", 1)[0])
+
+        payload = b"".join(application(environ, start_response))
+        self.assertEqual(response["status"], 413)
+        self.assertIn("4 MB", json.loads(payload)["error"])
 
 
 if __name__ == "__main__":

@@ -202,7 +202,7 @@ onBeforeUnmount(() => requestController?.abort())
             <p v-else class="result-caption">Tu resultado aparecerá aquí</p>
 
             <div class="waveform" :class="{ 'waveform-active': result || isAnalyzing }" aria-hidden="true">
-              <span v-for="(height, index) in [14, 23, 17, 31, 22, 42, 29, 50, 34, 61, 38, 49, 25, 57, 35, 68, 42, 55, 31, 47, 25, 59, 39, 71, 43, 56, 30, 48, 22, 62, 36, 52, 28, 44, 19, 35, 24]" :key="index" :style="{ height: `${height}%`, '--bar-index': index }"></span>
+              <span v-for="(height, index) in [14, 23, 17, 31, 22, 42, 29, 50, 34, 61, 38, 49, 25, 57, 35, 68, 42, 55, 31, 47, 25, 59, 39, 71, 43, 56, 30, 48, 22, 62, 36, 52, 28, 44, 19, 35, 24]" :key="index" :class="height < 25 ? 'wave-short' : height < 46 ? 'wave-medium' : 'wave-tall'"></span>
             </div>
 
             <div v-if="result" class="result-footnote">

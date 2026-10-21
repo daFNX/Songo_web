@@ -587,6 +587,18 @@ p {
   transition: opacity 250ms ease;
 }
 
+.waveform .wave-short {
+  height: 24%;
+}
+
+.waveform .wave-medium {
+  height: 47%;
+}
+
+.waveform .wave-tall {
+  height: 72%;
+}
+
 .waveform-active {
   opacity: 1;
 }
@@ -594,7 +606,22 @@ p {
 .waveform-active span {
   opacity: 0.78;
   animation: wave 800ms ease-in-out infinite alternate;
-  animation-delay: calc(var(--bar-index) * -37ms);
+}
+
+.waveform-active span:nth-child(4n + 1) {
+  animation-delay: -0.55s;
+}
+
+.waveform-active span:nth-child(4n + 2) {
+  animation-delay: -0.35s;
+}
+
+.waveform-active span:nth-child(4n + 3) {
+  animation-delay: -0.15s;
+}
+
+.waveform-active span:nth-child(4n) {
+  animation-delay: -0.65s;
 }
 
 @keyframes wave {

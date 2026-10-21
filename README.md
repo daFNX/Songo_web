@@ -6,6 +6,7 @@
 
 - Interfaz en Vue 3 y Vite, adaptada a móviles y escritorio.
 - Estimación de BPM en Python mediante análisis local de la envolvente de energía y autocorrelación.
+- API WSGI de la biblioteca estándar, compatible con el runtime Python de Vercel y ejecutable localmente.
 - Carga por selector o arrastrar y soltar; por ahora, solo WAV PCM de 1 o 2 canales.
 - Errores visibles para formatos incorrectos, archivos vacíos/dañados/silenciosos, audios demasiado cortos o largos y archivos mayores de 4 MB.
 - La API procesa el audio en memoria y no lo guarda.
@@ -29,7 +30,7 @@ npm install
 Terminal 1, iniciar la API Python:
 
 ```powershell
-python api\index.py
+python api\analyze.py
 ```
 
 Terminal 2, iniciar Vue:

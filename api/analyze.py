@@ -4,7 +4,8 @@ import math
 import os
 import struct
 import wave
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http import HTTPStatus
+from wsgiref.simple_server import make_server
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_DURATION_SECONDS = 180
@@ -123,58 +124,61 @@ def analyze_wav(content):
     }
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _respond(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.end_headers()
-        self.wfile.write(body)
+def respond(start_response, status, payload, extra_headers=()):
+    body = json.dumps(payload).encode("utf-8")
+    headers = [
+        ("Content-Type", "application/json; charset=utf-8"),
+        ("Content-Length", str(len(body))),
+        ("Cache-Control", "no-store"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Referrer-Policy", "no-referrer"),
+    ]
+    headers.extend(extra_headers)
+    start_response(f"{status} {HTTPStatus(status).phrase}", headers)
+    return [body]
 
-    def do_GET(self):
-        if self.path == "/api/health":
-            self._respond(200, {"status": "ok"})
-        else:
-            self._respond(404, {"error": "Ruta no encontrada."})
 
-    def do_POST(self):
-        if self.path != "/api/analyze":
-            self._respond(404, {"error": "Ruta no encontrada."})
-            return
+def application(environ, start_response):
+    method = environ.get("REQUEST_METHOD", "GET").upper()
+    path = environ.get("PATH_INFO", "")
 
-        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-        if content_type not in ("audio/wav", "audio/x-wav", "application/octet-stream"):
-            self._respond(415, {"error": "Formato no compatible. Sube un archivo WAV."})
-            return
+    if method == "GET" and path == "/api/health":
+        return respond(start_response, 200, {"status": "ok"})
+    if method != "POST":
+        return respond(
+            start_response,
+            405,
+            {"error": "Método no permitido."},
+            [("Allow", "GET, POST")],
+        )
+    if path != "/api/analyze":
+        return respond(start_response, 404, {"error": "Ruta no encontrada."})
 
-        try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self._respond(400, {"error": "No pudimos validar el tamaño del archivo."})
-            return
+    content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[0].strip().lower()
+    if content_type not in ("audio/wav", "audio/x-wav", "application/octet-stream"):
+        return respond(start_response, 415, {"error": "Formato no compatible. Sube un archivo WAV."})
 
-        if content_length <= 0:
-            self._respond(400, {"error": "No recibimos ningún archivo."})
-            return
-        if content_length > MAX_FILE_BYTES:
-            self._respond(413, {"error": "El archivo supera el límite de 4 MB."})
-            return
+    try:
+        content_length = int(environ.get("CONTENT_LENGTH", "0"))
+    except ValueError:
+        return respond(start_response, 400, {"error": "No pudimos validar el tamaño del archivo."})
 
-        try:
-            result = analyze_wav(self.rfile.read(content_length))
-            self._respond(200, result)
-        except AnalysisError as error:
-            self._respond(error.status, {"error": str(error)})
+    if content_length <= 0:
+        return respond(start_response, 400, {"error": "No recibimos ningún archivo."})
+    if content_length > MAX_FILE_BYTES:
+        return respond(start_response, 413, {"error": "El archivo supera el límite de 4 MB."})
 
-    def log_message(self, format_string, *args):
-        print("Songo API:", format_string % args)
+    content = environ["wsgi.input"].read(content_length)
+    if len(content) != content_length:
+        return respond(start_response, 400, {"error": "La carga del archivo quedó incompleta."})
+
+    try:
+        return respond(start_response, 200, analyze_wav(content))
+    except AnalysisError as error:
+        return respond(start_response, error.status, {"error": str(error)})
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
     print(f"Songo API escuchando en http://127.0.0.1:{port}")
-    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    make_server("127.0.0.1", port, application).serve_forever()
