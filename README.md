@@ -2,6 +2,9 @@
 
 **Tu música, sin dudas.** Maqueta funcional para estimar el tempo de grabaciones musicales.
 
+- **Aplicación:** [songo-jet.vercel.app](https://songo-jet.vercel.app)
+- **Repositorio:** [daFNX/Songo_web](https://github.com/daFNX/Songo_web)
+
 ## Qué incluye esta versión
 
 - Interfaz en Vue 3 y Vite, adaptada a móviles y escritorio.
@@ -50,7 +53,7 @@ npm run build
 
 ## Publicar en Vercel
 
-La configuración `vercel.json` sirve la aplicación Vite y dirige `/api/analyze` a la función Python, en el mismo origen. Desde una cuenta con Vercel CLI configurado:
+Vercel detecta el frontend Vue/Vite y publica `api/analyze.py` como la función Python same-origin `/api/analyze`. El repositorio está conectado a Vercel para generar despliegues al enviar commits. Desde una cuenta con Vercel CLI configurado:
 
 ```powershell
 npx vercel
