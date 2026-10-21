@@ -5,7 +5,7 @@ import struct
 import unittest
 import wave
 
-from analyze import AnalysisError, analyze_wav, application
+from api.analyze import AnalysisError, analyze_wav, application
 
 
 def make_wav(bpm=120, duration=8, sample_rate=8000):

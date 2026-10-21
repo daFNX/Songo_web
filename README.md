@@ -47,7 +47,7 @@ Abre la URL local que indique Vite. Vite reenvía `/api` a Python en `127.0.0.1:
 ## Verificar
 
 ```powershell
-python -m unittest discover -s api -p "test*.py"
+python -m unittest discover -s tests -p "test*.py"
 npm run build
 ```
 
