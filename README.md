@@ -73,6 +73,7 @@ La plataforma impone límites de tamaño y tiempo a las funciones. Esta maqueta 
 - Límite de bytes comprobado en navegador y servidor antes de analizar.
 - Límites de canales, frecuencia de muestreo y duración para acotar trabajo y memoria.
 - Sin nombres de archivo en el backend, persistencia, credenciales, servicios de terceros ni acceso al shell.
+- Las pruebas están fuera de `api/` para no publicar endpoints de prueba.
 - Respuestas de error acotadas, JSON, `Cache-Control: no-store` y `X-Content-Type-Options: nosniff`.
 - Cabeceras de seguridad en Vercel, incluida CSP, y API same-origin sin CORS abierto.
 - `Permissions-Policy` bloquea cámara, micrófono y geolocalización: la demo no los necesita.
