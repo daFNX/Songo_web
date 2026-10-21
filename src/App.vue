@@ -1,10 +1,15 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-const MAX_FILE_BYTES = 4 * 1024 * 1024
+const MAX_FILE_BYTES = 50 * 1024 * 1024
+const MAX_ANALYSIS_BYTES = 4 * 1024 * 1024
+const MAX_DURATION_SECONDS = 180
+const OUTPUT_SAMPLE_RATE = 11025
+const SUPPORTED_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'ogg', 'flac', 'mp4', 'webm'])
 const selectedFile = ref(null)
 const isDragging = ref(false)
 const isAnalyzing = ref(false)
+const analysisStage = ref('preparing')
 const result = ref(null)
 const errorMessage = ref('')
 const fileInput = ref(null)
@@ -17,14 +22,20 @@ const fileSize = computed(() => {
     : `${(selectedFile.value.size / 1024 / 1024).toFixed(1)} MB`
 })
 
+const fileFormat = computed(() => {
+  if (!selectedFile.value) return ''
+  return selectedFile.value.name.split('.').pop()?.toUpperCase() || 'AUDIO'
+})
+
 function validateFile(file) {
   if (!file) return 'No pudimos leer ese archivo. Inténtalo de nuevo.'
-  if (!file.name.toLowerCase().endsWith('.wav')) {
-    return 'Por ahora solo analizamos archivos WAV. Elige una canción en ese formato.'
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  if (!SUPPORTED_EXTENSIONS.has(extension)) {
+    return 'Prueba con WAV, MP3, M4A, AAC, OGG o FLAC. El formato debe ser compatible con tu navegador.'
   }
   if (file.size === 0) return 'El archivo está vacío. Elige una grabación con audio.'
   if (file.size > MAX_FILE_BYTES) {
-    return 'El archivo supera el límite de 4 MB. Prueba con un fragmento más corto.'
+    return 'El archivo supera el límite de 50 MB. Prueba con un fragmento más corto.'
   }
   return ''
 }
@@ -57,6 +68,77 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainder).padStart(2, '0')}`
 }
 
+async function prepareAnalysisAudio(file) {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextConstructor) {
+    throw new Error('Este navegador no puede preparar el audio. Prueba con una versión reciente de Chrome, Edge o Safari.')
+  }
+
+  const audioContext = new AudioContextConstructor()
+  let decodedAudio
+  try {
+    decodedAudio = await audioContext.decodeAudioData(await file.arrayBuffer())
+  } catch {
+    throw new Error('No pudimos leer ese audio. Prueba WAV, MP3, M4A u OGG compatible con tu navegador.')
+  } finally {
+    await audioContext.close()
+  }
+
+  if (decodedAudio.duration < 2) {
+    throw new Error('El audio debe durar al menos 2 segundos.')
+  }
+  if (decodedAudio.duration > MAX_DURATION_SECONDS) {
+    throw new Error('El audio supera la duración máxima de 3 minutos.')
+  }
+
+  const frameCount = Math.floor(decodedAudio.duration * OUTPUT_SAMPLE_RATE)
+  const wav = new ArrayBuffer(44 + frameCount * 2)
+  const header = new DataView(wav)
+  const writeTag = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      header.setUint8(offset + index, value.charCodeAt(index))
+    }
+  }
+
+  writeTag(0, 'RIFF')
+  header.setUint32(4, wav.byteLength - 8, true)
+  writeTag(8, 'WAVE')
+  writeTag(12, 'fmt ')
+  header.setUint32(16, 16, true)
+  header.setUint16(20, 1, true)
+  header.setUint16(22, 1, true)
+  header.setUint32(24, OUTPUT_SAMPLE_RATE, true)
+  header.setUint32(28, OUTPUT_SAMPLE_RATE * 2, true)
+  header.setUint16(32, 2, true)
+  header.setUint16(34, 16, true)
+  writeTag(36, 'data')
+  header.setUint32(40, frameCount * 2, true)
+
+  const channels = Array.from(
+    { length: decodedAudio.numberOfChannels },
+    (_, index) => decodedAudio.getChannelData(index),
+  )
+  const samplesPerOutputFrame = decodedAudio.sampleRate / OUTPUT_SAMPLE_RATE
+  for (let index = 0; index < frameCount; index += 1) {
+    const start = Math.floor(index * samplesPerOutputFrame)
+    const end = Math.min(decodedAudio.length, Math.max(start + 1, Math.floor((index + 1) * samplesPerOutputFrame)))
+    let sample = 0
+    for (const channel of channels) {
+      for (let sourceIndex = start; sourceIndex < end; sourceIndex += 1) {
+        sample += channel[sourceIndex]
+      }
+    }
+    sample /= (end - start) * channels.length
+    const pcmSample = Math.max(-1, Math.min(1, sample))
+    header.setInt16(44 + index * 2, pcmSample < 0 ? pcmSample * 32768 : pcmSample * 32767, true)
+  }
+
+  if (wav.byteLength > MAX_ANALYSIS_BYTES) {
+    throw new Error('No pudimos reducir el audio a un tamaño compatible. Prueba con un fragmento más corto.')
+  }
+  return new Blob([wav], { type: 'audio/wav' })
+}
+
 async function analyze() {
   if (!selectedFile.value || isAnalyzing.value) return
 
@@ -66,15 +148,18 @@ async function analyze() {
   requestController = new AbortController()
 
   try {
+    analysisStage.value = 'preparing'
+    const analysisAudio = await prepareAnalysisAudio(selectedFile.value)
+    analysisStage.value = 'analyzing'
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'audio/wav' },
-      body: selectedFile.value,
+      body: analysisAudio,
       signal: requestController.signal,
     })
     const data = await response.json()
     if (!response.ok) {
-      throw new Error(data.error || 'No pudimos analizar el archivo. Prueba con otro WAV.')
+      throw new Error(data.error || 'No pudimos analizar el archivo. Prueba con otro audio.')
     }
     result.value = {
       ...data,
@@ -86,6 +171,7 @@ async function analyze() {
     }
   } finally {
     isAnalyzing.value = false
+    analysisStage.value = 'preparing'
     requestController = undefined
   }
 }
@@ -146,8 +232,8 @@ onBeforeUnmount(() => requestController?.abort())
                 ref="fileInput"
                 class="visually-hidden"
                 type="file"
-                accept=".wav,audio/wav"
-                aria-label="Selecciona un archivo WAV"
+                accept=".wav,.mp3,.m4a,.aac,.ogg,.flac,.mp4,.webm,audio/*"
+                aria-label="Selecciona un archivo de audio"
                 @change="onInputChange"
               />
               <template v-if="selectedFile">
@@ -156,9 +242,9 @@ onBeforeUnmount(() => requestController?.abort())
                 </div>
                 <div class="file-details">
                   <span class="file-name">{{ selectedFile.name }}</span>
-                  <span class="file-meta">{{ fileSize }} <span>·</span> WAV</span>
+                  <span class="file-meta">{{ fileSize }} <span>·</span> {{ fileFormat }}</span>
                 </div>
-                <button class="remove-file" type="button" aria-label="Quitar archivo" @click="clearFile">×</button>
+                <button class="remove-file" type="button" aria-label="Quitar archivo" :disabled="isAnalyzing" @click="clearFile">×</button>
               </template>
               <template v-else>
                 <div class="upload-icon" aria-hidden="true">
@@ -166,14 +252,14 @@ onBeforeUnmount(() => requestController?.abort())
                 </div>
                 <p class="drop-title">Suelta tu audio aquí</p>
                 <p class="drop-subtitle">o <button class="browse-button" type="button" @click="fileInput?.click()">explora tus archivos</button></p>
-                <span class="file-requirements">WAV · MÁXIMO 4 MB</span>
+                <span class="file-requirements">WAV · MP3 · M4A · OGG · HASTA 50 MB</span>
               </template>
             </div>
 
             <p v-if="errorMessage" class="feedback error-message" role="alert">
               <span class="feedback-icon" aria-hidden="true">!</span>{{ errorMessage }}
             </p>
-            <p v-else class="privacy-note"><span aria-hidden="true">✳</span> Tu archivo se analiza y no se guarda.</p>
+            <p v-else class="privacy-note"><span aria-hidden="true">✳</span> El original se queda en tu equipo; enviamos solo una copia ligera.</p>
 
             <button
               class="analyze-button"
@@ -182,7 +268,7 @@ onBeforeUnmount(() => requestController?.abort())
               @click="analyze"
             >
               <span v-if="isAnalyzing" class="spinner" aria-hidden="true"></span>
-              {{ isAnalyzing ? 'Escuchando tu canción…' : 'Analizar tempo' }}
+              {{ isAnalyzing ? (analysisStage === 'preparing' ? 'Preparando el audio…' : 'Escuchando tu canción…') : 'Analizar tempo' }}
               <span v-if="!isAnalyzing" class="button-arrow" aria-hidden="true">↗</span>
             </button>
           </div>
@@ -226,12 +312,12 @@ onBeforeUnmount(() => requestController?.abort())
           <article class="step">
             <span class="step-number">01</span>
             <h3>Sube tu audio</h3>
-            <p>Un fragmento WAV de hasta 4 MB es todo lo que necesitas.</p>
+            <p>Elige WAV, MP3, M4A u otro formato compatible. Hasta 50 MB.</p>
           </article>
           <article class="step">
             <span class="step-number">02</span>
             <h3>Analizamos el ritmo</h3>
-            <p>Python detecta los pulsos de tu grabación, sin guardar el archivo.</p>
+            <p>Preparamos una copia ligera en tu navegador y Python estima el pulso.</p>
           </article>
           <article class="step">
             <span class="step-number">03</span>
